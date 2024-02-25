@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let image = match cli_args.r#type {
         ComputationType::Gpu => {
-            let context = ComputeContext::new(ComputeContextMode::ReleaseSilent).await?;
+            let context = ComputeContext::new(ComputeContextMode::Debug).await?;
             let scene = Scene::from(&geometry);
         
             render_image_gpu(
