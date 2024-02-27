@@ -1,6 +1,8 @@
 struct CallData {
     screen_width: u32,
     screen_height: u32,
+    y_offset: u32,
+    index: u32,
 }
 
 struct RenderConfiguration {
@@ -202,7 +204,7 @@ fn sdf_generic_op(lhs: f32, rhs: f32, data_index: u32, op_type: u32) -> f32 {
         case 3u: { return sdf_intersection(lhs, rhs); }
         case 4u: { return sdf_smooth_intersection(lhs, rhs, param); }
         case 5u: { return sdf_difference(lhs, rhs); }
-        case 6u: { return sdf_smooth_intersection(lhs, rhs, param); }
+        case 6u: { return sdf_smooth_difference(lhs, rhs, param); }
         case 7u: { return sdf_compliment(lhs); }
         default: { return 0.0; }
     }
@@ -225,12 +227,26 @@ fn object_color(data_index: u32) -> vec3f {
 fn distance_color_mix(
     left_color: vec3f, right_color: vec3f,
     left_distance: f32, right_distance: f32,
+    op_type: u32,
 ) -> vec3f {
-    return (right_distance * left_color + left_distance * right_color)
-        / (left_distance + right_distance);
+    switch op_type {
+        case 5u, 6u: {
+            let sum = -left_distance + right_distance;
+
+            if abs(sum) > 0.01 {
+                return (right_distance * left_color - left_distance * right_color) / sum;
+            } else {
+                return left_color;
+            }
+        }
+        default: {
+            return (right_distance * left_color + left_distance * right_color)
+                / (left_distance + right_distance);
+        }
+    }
 }
 
-const STACK_SIZE = 20u;
+const STACK_SIZE = 15u;
 const SCENE_ELEM_SIZE = 12u;
 
 struct SdfResult {
@@ -238,17 +254,14 @@ struct SdfResult {
     distance: f32,
 }
 
+var<private> distance_stack: array<f32, STACK_SIZE>;
+var<private> color_stack: array<vec3f, STACK_SIZE>;
+
 fn sdf(pos: vec3f) -> SdfResult {
-    // the stack of result distances
-    var distance_stack: array<f32, STACK_SIZE>;
-
-    // the stack of result colors
-    var color_stack: array<vec3f, STACK_SIZE>;
-
     var stack_len = 0u;
 
     for (var scene_len = arrayLength(&scene) / SCENE_ELEM_SIZE
-        ; scene_len > 0
+        ; scene_len > 0u
         ; scene_len--
     ) {
         let scene_index = scene_len - 1u;
@@ -284,6 +297,7 @@ fn sdf(pos: vec3f) -> SdfResult {
 
                 color_stack[stack_len - 2] = distance_color_mix(
                     left_color, right_color, left_distance, right_distance,
+                    op_type,
                 );
 
                 stack_len--;
@@ -292,45 +306,6 @@ fn sdf(pos: vec3f) -> SdfResult {
     }
 
     return SdfResult(color_stack[0], distance_stack[0]);
-}
-
-fn sdf_fast(pos: vec3f) -> SdfResult {
-    var stack: array<u32, 100>;
-    var stack_len = 0u;
-
-    for (var scene_len = arrayLength(&scene) / SCENE_ELEM_SIZE
-        ; scene_len > 0
-        ; scene_len--
-    ) {
-        let scene_index = scene_len - 1;
-
-        for (var i = 0u; i < 10; i++) {
-            let d = scene[SCENE_ELEM_SIZE * scene_index + i];
-
-            stack[scene_len] = i + d;
-            stack_len++;
-        }
-    }
-
-    let distance = sdf_union(
-        sdf_union(
-            sdf_intersection(
-                ball_sdf(pos, vec3f(0.4, 0.0, 0.0), 0.8 + 0.001 * f32(stack[0])),
-                ball_sdf(pos, vec3f(0.0), 0.6),
-            ),
-            sdf_smooth_union(
-                ball_sdf(pos, vec3f(-0.6, 0.0, 0.0), 0.4),
-                ball_sdf(pos, vec3f(-1.0, 0.4, 0.0), 0.2),
-                0.25,
-            ),
-        ),
-        sdf_difference(
-            ball_sdf(pos, vec3f(1.5, 0.5, 0.0), 0.5),
-            ball_sdf(pos, vec3f(1.5, 0.0, 0.0), 0.5),
-        ),
-    );
-
-    return SdfResult(vec3f(1.0), distance);
 }
 
 fn compute_normal(pos: vec3f) -> vec3f {
@@ -396,38 +371,64 @@ struct HitInfo {
     color: vec3f,
 }
 
-fn hit(ro: vec3f, rd: vec3f) -> HitInfo {
-    let raymarch_hit = raymarch(ro, rd);
+var<private> hit_color_stack: array<vec3f, 6>;
+var<private> reflectance_stack: array<f32, 6>;
 
-    if ~raymarch_hit.n_steps == 0 {
-        return HitInfo(false, ro, sky_color(rd));
+fn hit(origin: vec3f, direction: vec3f) -> HitInfo {
+    var hit_pos = origin;
+    let stack_len = cfg.n_bounces + 1;
+
+    var ro = origin;
+    var rd = direction;
+
+    for (var i = 0u; i < cfg.n_bounces + 1; i++) {
+        let hit = raymarch(ro, rd);
+
+        if ~hit.n_steps == 0 {
+            hit_color_stack[i] = sky_color(rd);
+            reflectance_stack[i] = 0.0;
+            continue;
+        }
+
+        let pos = hit.pos;
+
+        if i == 0 {
+            hit_pos = pos;
+        }
+
+        let normal = compute_normal(pos);
+
+        let is_shadow = ~raymarch(
+            pos + cfg.normal_lift * normal, cfg.to_light,
+        ).n_steps != 0;
+
+        let albedo = sdf(pos).color;
+        var brightness: f32;
+
+        if !is_shadow {
+            brightness = max(cfg.ambient, dot(normal, cfg.to_light));
+        } else {
+            brightness = cfg.ambient;
+        }
+
+        let fresnel_factor = pow(1.0 - abs(dot(normal, rd)), cfg.fresnel_power);
+
+        let ao = compute_ambient_occlusion(pos, normal);
+
+        hit_color_stack[i] = ao * brightness * albedo;
+        reflectance_stack[i] = fresnel_factor;
+
+        ro = pos + cfg.normal_lift * normal;
+        rd = reflect(rd, normal);
     }
 
-    let normal = compute_normal(raymarch_hit.pos);
+    var color = hit_color_stack[stack_len - 1];
 
-    let albedo = sdf(raymarch_hit.pos).color;
-    var brightness = max(cfg.ambient, dot(normal, cfg.to_light));
-
-    let is_shadow
-        = ~raymarch(raymarch_hit.pos + cfg.normal_lift * normal, cfg.to_light).n_steps
-        != 0;
-    
-    if is_shadow {
-        brightness = cfg.ambient;
+    for (var i = stack_len - 2; ~i != 0u; i--) {
+        color = mix(hit_color_stack[i], color, reflectance_stack[i]);
     }
 
-    let fresnel_factor
-        = 1.0 - pow(1.0 - abs(dot(normal, rd)), cfg.fresnel_power);
-
-    let ao = compute_ambient_occlusion(raymarch_hit.pos, normal);
-
-    let reflected_dir = reflect(rd, normal);
-
-    return HitInfo(
-        true,
-        raymarch_hit.pos,
-        ao * mix(albedo * brightness, sky_color(reflected_dir), fresnel_factor),
-    );
+    return HitInfo(true, hit_pos, color);
 }
 
 fn sky_color(direction: vec3f) -> vec3f {
@@ -502,8 +503,8 @@ fn get_color(screen_coord: vec2f) -> vec3f {
     return 0.25 * color;
 }
 
-const WORKGROUP_WIDTH = 16u;
-const WORKGROUP_HEIGHT = 16u;
+const WORKGROUP_WIDTH = 8u;
+const WORKGROUP_HEIGHT = 8u;
 
 @compute
 @workgroup_size(WORKGROUP_WIDTH, WORKGROUP_HEIGHT, 1)
@@ -514,23 +515,25 @@ fn compute_image(
     @builtin(local_invocation_index) local_invocation_index: u32,
     @builtin(num_workgroups) num_workgroups: vec3<u32>,
 ) {
-    let workgroup_index = workgroup_id.x +
-        workgroup_id.y * num_workgroups.x +
-        workgroup_id.z * num_workgroups.x * num_workgroups.y;
+    let workgroup_index = workgroup_id.x
+        + workgroup_id.y * num_workgroups.x
+        + workgroup_id.z * num_workgroups.x * num_workgroups.y;
 
-    let global_invocation_index =
-        workgroup_index * WORKGROUP_WIDTH * WORKGROUP_HEIGHT +
-        local_invocation_index;
+    let global_invocation_index
+        = workgroup_index * WORKGROUP_WIDTH * WORKGROUP_HEIGHT
+        + local_invocation_index;
 
-    let index = global_invocation_index;
+    let screen_index = global_invocation_index
+        + call_data.y_offset * call_data.screen_width
+        + call_data.index * call_data.screen_width / 3;
 
-    let x_screen = index % call_data.screen_width;
-    let y_screen = index / call_data.screen_width;
+    let x_screen = screen_index % call_data.screen_width;
+    let y_screen = screen_index / call_data.screen_width;
 
     let screen_coord = vec2f(
         f32(2 * i32(x_screen) - i32(call_data.screen_width) + 1) / f32(call_data.screen_width),
         f32(2 * i32(y_screen) - i32(call_data.screen_height) + 1) / f32(call_data.screen_height),
     );
 
-    image[index] = shorten_color(get_color(screen_coord));
+    image[global_invocation_index] = shorten_color(get_color(screen_coord));
 }

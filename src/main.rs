@@ -5,6 +5,7 @@
 pub mod compute;
 pub mod render;
 pub mod util;
+pub mod loading;
 
 use compute::{ComputeContext, ComputeContextMode};
 use render::*;
@@ -13,7 +14,7 @@ use std::{error::Error, io::Read, sync::Arc, path::Path};
 use itertools::Itertools;
 use wgpu::{include_wgsl, BindGroupDescriptor};
 use clap::Parser;
-use csg::{geometry::{self, *}, scene::Scene};
+use csg::{geometry::{self, *}, render::Camera, scene::Scene};
 use glam::*;
 use csg::render::{get_color, RenderConfiguration};
 
@@ -25,8 +26,8 @@ fn default<T: Default>() -> T {
 
 
 
-const DEFAULT_SCREEN_WIDTH: usize = 2520;
-const DEFAULT_SCREEN_HEIGHT: usize = 1680;
+const DEFAULT_SCREEN_WIDTH: usize = 6 * 512;
+const DEFAULT_SCREEN_HEIGHT: usize = 4 * 512;
 
 
 
@@ -44,6 +45,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let screen_height = cli_args.scale
         * cli_args.height.unwrap_or(DEFAULT_SCREEN_HEIGHT) / cli_args.low;
 
+    assert!(screen_width % 512 == 0, "image width should be a multiple of 512");
+    assert!(screen_height % 512 == 0, "image height should be a multiple of 512");
+
     let geometry = csg::union! {
         Geometry::intersect(
             Ball::new(Vec3::X, 0.4 * Vec3::X, 0.8),
@@ -54,13 +58,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ball::new(Vec3::Z, -1.0 * Vec3::X + 0.4 * Vec3::Y, 0.2),
             0.25,
         ),
-        Geometry::subtract(
-            Ball::new(Vec3::X, 1.5 * Vec3::X + 0.5 * Vec3::Y, 0.5),
+        Geometry::smooth_subtract(
             Ball::new(Vec3::Y, 1.5 * Vec3::X, 0.5),
+            Ball::new(Vec3::X, 1.5 * Vec3::X + 0.5 * Vec3::Y, 0.5),
+            0.25,
+        ),
+        Geometry::smooth_subtract(
+            Ball::new(Vec3::X, 1.5 * Vec3::X + 1.1 * Vec3::Y, 0.5),
+            Ball::new(Vec3::Y, 1.5 * Vec3::X + 0.6 * Vec3::Y, 0.5),
+            0.25,
+        ),
+        Geometry::smooth_intersection(
+            Ball::new(Vec3::Y, 1.5 * Vec3::X + 0.4 * Vec3::Y, 0.4),
+            Ball::new(Vec3::Z, 1.5 * Vec3::X + 0.6 * Vec3::Y, 0.4),
+            0.25,
         ),
     };
 
-    let render_cfg = RenderConfiguration::default();
+    // let geometry = Mandelbulb::new(vec3(1.0, 0.69, 0.0), Vec3::ZERO, 10, 3.0);
+
+    let render_cfg = RenderConfiguration {
+        camera: Camera {
+            phi: 1.2,
+            distance: 1.5,
+            vfov: 2.0 * std::f32::consts::FRAC_PI_3,
+            // target_pos: 0.5 * Vec3::Y + 1.5 * Vec3::X,
+            ..default()
+        },
+        to_light: vec3(1.0, 0.5, 0.5).normalize(),
+        ..default()
+    };
 
     let image = match cli_args.r#type {
         ComputationType::Gpu => {
@@ -101,6 +128,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
+#[allow(rustdoc::invalid_html_tags)]
 struct CliArgs {
     /// Name of the output image file
     #[arg(short, long)]
@@ -113,10 +141,6 @@ struct CliArgs {
     /// Height of the output image
     #[arg(long)]
     height: Option<usize>,
-
-    /// Do parallel image rendering
-    #[arg(long, default_value_t = false)]
-    do_parallel: bool,
 
     /// Decreases resolution by <LOW> times
     #[arg(long, short, default_value_t = 1)]

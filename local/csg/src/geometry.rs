@@ -520,8 +520,8 @@ impl<G1: Geometry, G2: Geometry> Geometry for SmoothDifference<G1, G2> {
             let left = self.left.sdf()(pos);
             let right = self.right.sdf()(pos);
             let distance = smooth_diff(left.distance, right.distance, self.param);
-            let color = (right.distance * left.color + left.distance * right.color)
-                / (left.distance + right.distance);
+            let color = (right.distance * left.color - left.distance * right.color)
+                / (-left.distance + right.distance);
             DistanceInfo { distance, color }
         }
     }
@@ -564,8 +564,8 @@ pub fn smooth_max(lhs: f32, rhs: f32, param: f32) -> f32 {
 }
 
 pub fn smooth_diff(lhs: f32, rhs: f32, param: f32) -> f32 {
-    let h = clamp(0.5 - 0.5 * (rhs + lhs) / param, 0.0, 1.0);
-    mix(rhs, -lhs, h) + param * h * (1.0 - h)
+    let h = clamp(0.5 - 0.5 * (lhs + rhs) / param, 0.0, 1.0);
+    mix(lhs, -rhs, h) + param * h * (1.0 - h)
 }
 
 fn clamp(value: f32, min: f32, max: f32) -> f32 {

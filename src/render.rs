@@ -63,21 +63,31 @@ pub fn render_image_gpu(
 ) -> Vec<u8> {
     use wgpu::include_wgsl;
 
+    const COMPUTE_BLOCK_SIZE: u64 = 512;
+    const COMPUTE_WORKGROUP_SIZE: u64 = 8;
+
     let shader = context.device.create_shader_module(include_wgsl!("shaders/compute_image.wgsl"));
 
     let render_uniform_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("render_configuration"),
-        contents: unsafe { std::slice::from_raw_parts(
-            cfg as *const _ as *const u8,
-            std::mem::size_of_val(cfg),
-        )},
+        contents: bytemuck::bytes_of(cfg),
         usage: wgpu::BufferUsages::UNIFORM,
     });
 
-    let call_data_uniform_buffer = context.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+    struct CallUniform {
+        screen_width: u32,
+        screen_height: u32,
+        y_offset: u32,
+        index: u32,
+    }
+
+    let call_data_uniform_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("call_data"),
-        contents: bytemuck::bytes_of(&[screen_width as u32, screen_height as u32]),
-        usage: wgpu::BufferUsages::UNIFORM,
+        size: std::mem::size_of::<CallUniform>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
 
     let scene_bytes = scene.as_bytes();
@@ -91,7 +101,7 @@ pub fn render_image_gpu(
     let image_buffer_elem_size = std::mem::size_of::<u32>();
     let gpu_image_buffer_desc = wgpu::BufferDescriptor {
         label: Some("image_buffer"),
-        size: (image_buffer_elem_size * image_buffer_len) as u64,
+        size: image_buffer_elem_size as u64 * COMPUTE_BLOCK_SIZE.pow(2),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     };
@@ -99,6 +109,7 @@ pub fn render_image_gpu(
     let gpu_image_buffer = context.device.create_buffer(&gpu_image_buffer_desc);
     let cpu_image_buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        size: (image_buffer_elem_size * image_buffer_len) as u64,
         ..gpu_image_buffer_desc
     });
 
@@ -184,33 +195,56 @@ pub fn render_image_gpu(
         entry_point: "compute_image",
     });
 
-    let mut encoder = context.device.create_command_encoder(&default());
+    let n_compute_blocks = image_buffer_len as u64
+        / (COMPUTE_BLOCK_SIZE * COMPUTE_BLOCK_SIZE);
 
-    {
-        let mut pass = encoder.begin_compute_pass(&default());
+    let compute_block_height = screen_height as u64 / n_compute_blocks;
 
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(
-            screen_width as u32 / 16,
-            screen_height as u32 / 16,
-            1,
+    for i in 0..n_compute_blocks {
+        let mut encoder = context.device.create_command_encoder(&default());
+
+        context.queue.write_buffer(
+            &call_data_uniform_buffer, 0, bytemuck::bytes_of(&CallUniform {
+                screen_width: screen_width as u32,
+                screen_height: screen_height as u32,
+                y_offset: (i * compute_block_height) as u32,
+                index: i as u32,
+            }),
         );
-    }
 
-    encoder.copy_buffer_to_buffer(
-        &gpu_image_buffer, 0, &cpu_image_buffer, 0,
-        (image_buffer_elem_size * image_buffer_len) as u64,
-    );
-    
-    context.queue.submit([encoder.finish()]);
+        context.device.poll(wgpu::Maintain::Wait);
+
+        {
+            let mut pass = encoder.begin_compute_pass(&default());
+
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(
+                COMPUTE_BLOCK_SIZE as u32 / COMPUTE_WORKGROUP_SIZE as u32,
+                COMPUTE_BLOCK_SIZE as u32 / COMPUTE_WORKGROUP_SIZE as u32,
+                1,
+            );
+        }
+
+        let compute_volume = COMPUTE_BLOCK_SIZE * COMPUTE_BLOCK_SIZE;
+
+        encoder.copy_buffer_to_buffer(
+            &gpu_image_buffer,
+            0,
+            &cpu_image_buffer,
+            i * compute_volume * image_buffer_elem_size as u64,
+            compute_volume * image_buffer_elem_size as u64,
+        );
+
+        context.queue.submit([encoder.finish()]);
+    }
 
     cpu_image_buffer.slice(..).map_async(wgpu::MapMode::Read, Result::unwrap);
 
     context.device.poll(wgpu::Maintain::Wait);
 
     let view = cpu_image_buffer.slice(..).get_mapped_range();
-    
+
     view.to_vec()
 }
 

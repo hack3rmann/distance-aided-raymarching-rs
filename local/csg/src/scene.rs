@@ -97,9 +97,7 @@ impl Scene {
                 let rhs_bytes = (*rhs as u32).to_le_bytes();
                 let param = 0_u32.to_le_bytes();
 
-                unsafe {
-                    std::mem::transmute([lhs_bytes, rhs_bytes, param])
-                }
+                bytemuck::cast([lhs_bytes, rhs_bytes, param])
             },
             CsgOp::SmoothDifference { lhs, rhs, param }
                 | CsgOp::SmoothIntersection { lhs, rhs, param }
@@ -109,19 +107,15 @@ impl Scene {
                 let rhs_bytes = (*rhs as u32).to_le_bytes();
                 let param = param.to_le_bytes();
 
-                unsafe {
-                    std::mem::transmute([lhs_bytes, rhs_bytes, param])
-                }
+                bytemuck::cast([lhs_bytes, rhs_bytes, param])
             },
             CsgOp::Compliment { from } => {
                 let lhs_bytes = (*from as u32).to_le_bytes();
                 let rhs_bytes = 0_u32.to_le_bytes();
                 let param = 0_u32.to_le_bytes();
 
-                unsafe {
-                    std::mem::transmute([lhs_bytes, rhs_bytes, param])
-                }
-            }
+                bytemuck::cast([lhs_bytes, rhs_bytes, param])
+            },
         }
     }
 

@@ -47,6 +47,8 @@ impl ComputeContext {
             compatible_surface: None,
         }).await.expect("failed to request the adapter");
 
+        let limits = adapter.limits();
+
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),
@@ -55,6 +57,12 @@ impl ComputeContext {
             },
             None,
         ).await?;
+
+        device.set_device_lost_callback(|reason, msg| {
+            if msg != "Device dropped." {
+                eprintln!("the device is lost: '{msg}', because: {reason:?}");
+            }
+        });
 
         Ok(Self { instance, adapter, device, queue })
     }
