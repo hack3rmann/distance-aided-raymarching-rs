@@ -7,5 +7,6 @@ edition = "2021"
 
 [dependencies]
 bytemuck = { version = "1.14.3", features = ["derive"] }
-glam = { version = "0.25.0", features = ["bytemuck"] }
+glam = { version = "0.25.0", features = ["bytemuck", "serde"] }
 smallvec = { version = "1.13.1", features = ["union"] }
+serde = { varsion = "1.0.197", features = ["derive"] }

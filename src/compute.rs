@@ -47,8 +47,6 @@ impl ComputeContext {
             compatible_surface: None,
         }).await.expect("failed to request the adapter");
 
-        let limits = adapter.limits();
-
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),

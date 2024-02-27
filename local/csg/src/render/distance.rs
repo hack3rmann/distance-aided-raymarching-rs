@@ -3,6 +3,7 @@
 
 
 use glam::*;
+use serde::{Deserialize, Serialize};
 
 
 
@@ -66,6 +67,7 @@ pub fn mandelbulb_sdf(color: Vec3, n_steps: usize, power: f32) -> impl Sdf {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Serialize, Deserialize)]
 pub struct RayMarchSettings {
     pub max_n_steps: u32,
     pub max_distance: f32,

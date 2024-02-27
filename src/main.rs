@@ -5,7 +5,6 @@
 pub mod compute;
 pub mod render;
 pub mod util;
-pub mod loading;
 
 use compute::{ComputeContext, ComputeContextMode};
 use render::*;
@@ -17,6 +16,7 @@ use clap::Parser;
 use csg::{geometry::{self, *}, render::Camera, scene::Scene};
 use glam::*;
 use csg::render::{get_color, RenderConfiguration};
+use thiserror::Error;
 
 
 
@@ -26,8 +26,10 @@ fn default<T: Default>() -> T {
 
 
 
-const DEFAULT_SCREEN_WIDTH: usize = 6 * 512;
-const DEFAULT_SCREEN_HEIGHT: usize = 4 * 512;
+const DEFAULT_SCREEN_WIDTH: usize = 2 * 512;
+const DEFAULT_SCREEN_HEIGHT: usize = 512;
+const RENDER_CFG_FILE: &str = "render_config.toml";
+const DEFAULT_OUT_FILE_NAME: &str = "out.png";
 
 
 
@@ -37,56 +39,58 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let cli_args = CliArgs::parse();
 
-    let result_name = cli_args.out.unwrap_or_else(|| String::from("out.png"));
+    let result_name = cli_args.out;
 
-    let screen_width = cli_args.scale
-        * cli_args.width.unwrap_or(DEFAULT_SCREEN_WIDTH) / cli_args.low;
-    
-    let screen_height = cli_args.scale
-        * cli_args.height.unwrap_or(DEFAULT_SCREEN_HEIGHT) / cli_args.low;
+    let screen_width = cli_args.scale * cli_args.width;    
+    let screen_height = cli_args.scale * cli_args.height;
 
+    assert!(cli_args.scale.is_power_of_two(), "image scale should be a power of 2");
     assert!(screen_width % 512 == 0, "image width should be a multiple of 512");
     assert!(screen_height % 512 == 0, "image height should be a multiple of 512");
 
     let geometry = csg::union! {
-        Geometry::intersect(
-            Ball::new(Vec3::X, 0.4 * Vec3::X, 0.8),
-            Ball::new(Vec3::X, 0.0 * Vec3::X, 0.6),
-        ),
         Geometry::smooth_union(
-            Ball::new(Vec3::Y, -0.6 * Vec3::X, 0.4),
-            Ball::new(Vec3::Z, -1.0 * Vec3::X + 0.4 * Vec3::Y, 0.2),
+            Geometry::smooth_union(
+                Geometry::subtract(
+                    Mandelbulb::new(Vec3::ONE, 1.2 * Vec3::Y, 20, 4.0),
+                    csg::union! {
+                        Geometry::subtract(
+                            Torus::new(Vec3::X, vec3(0.0, 0.0, 0.0), 0.8, 0.2),
+                            Torus::new(Vec3::X, vec3(0.0, 0.0, 0.0), 0.6, 0.2),
+                        ),
+                        Geometry::smooth_union(
+                            Ball::new(Vec3::ONE, vec3(0.0, 0.4, 0.0), 0.3),
+                            Ball::new(0.8 * Vec3::ONE, vec3(0.0, 1.0, 0.0), 0.6),
+                            0.4,
+                        ),
+                    },
+                ),
+                StraightPrism::new(vec3(0.56, 1.0, 0.59), Vec3::ZERO, 0.3 * Vec3::ONE),
+                0.25,
+            ),
+            Geometry::smooth_union(
+                Ball::new(Vec3::ONE, vec3(0.0, -0.4, 0.0), 0.3),
+                Ball::new(vec3(0.71, 0.56, 0.79), vec3(0.0, -1.0, 0.0), 0.5),
+                0.4,
+            ),
             0.25,
         ),
-        Geometry::smooth_subtract(
-            Ball::new(Vec3::Y, 1.5 * Vec3::X, 0.5),
-            Ball::new(Vec3::X, 1.5 * Vec3::X + 0.5 * Vec3::Y, 0.5),
-            0.25,
-        ),
-        Geometry::smooth_subtract(
-            Ball::new(Vec3::X, 1.5 * Vec3::X + 1.1 * Vec3::Y, 0.5),
-            Ball::new(Vec3::Y, 1.5 * Vec3::X + 0.6 * Vec3::Y, 0.5),
-            0.25,
-        ),
-        Geometry::smooth_intersection(
-            Ball::new(Vec3::Y, 1.5 * Vec3::X + 0.4 * Vec3::Y, 0.4),
-            Ball::new(Vec3::Z, 1.5 * Vec3::X + 0.6 * Vec3::Y, 0.4),
-            0.25,
+        Geometry::subtract(
+            Ball::new(vec3(0.23, 0.72, 1.0), Vec3::ZERO, 1.5),
+            StraightPrism::new(0.8 * Vec3::ONE, Vec3::ZERO, 1.2 * Vec3::ONE),
         ),
     };
 
-    // let geometry = Mandelbulb::new(vec3(1.0, 0.69, 0.0), Vec3::ZERO, 10, 3.0);
-
-    let render_cfg = RenderConfiguration {
-        camera: Camera {
-            phi: 1.2,
-            distance: 1.5,
-            vfov: 2.0 * std::f32::consts::FRAC_PI_3,
-            // target_pos: 0.5 * Vec3::Y + 1.5 * Vec3::X,
-            ..default()
+    let render_cfg = match fetch_render_cfg(&cli_args.cfg).await {
+        Ok(cfg) => cfg,
+        Err(FetchRenderCfgError::IoError(..)) => {
+            log::error!(
+                "{} not found, using default configuration",
+                &cli_args.cfg,
+            );
+            default()
         },
-        to_light: vec3(1.0, 0.5, 0.5).normalize(),
-        ..default()
+        Err(err) => panic!("failed to configurate rendering: {err}"),
     };
 
     let image = match cli_args.r#type {
@@ -126,35 +130,53 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+pub async fn fetch_render_cfg(path: impl AsRef<Path>)
+    -> Result<RenderConfiguration, FetchRenderCfgError>
+{
+    let cfg_string = tokio::fs::read_to_string(path).await?;
+    let cfg = toml::from_str(&cfg_string)?;
+    Ok(cfg)
+}
+
+#[derive(Debug, Error)]
+pub enum FetchRenderCfgError {
+    #[error("failed to read configuraion file")]
+    IoError(#[from] tokio::io::Error),
+
+    #[error("failed to parse configuration file")]
+    ParseError(#[from] toml::de::Error),
+}
+
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
 #[allow(rustdoc::invalid_html_tags)]
 struct CliArgs {
     /// Name of the output image file
-    #[arg(short, long)]
-    out: Option<String>,
+    #[arg(short, long, default_value_t = DEFAULT_OUT_FILE_NAME.into())]
+    out: String,
 
-    /// Width of the output image
-    #[arg(long)]
-    width: Option<usize>,
+    /// Width of the output image, must be a multiple of 512
+    #[arg(long, default_value_t = DEFAULT_SCREEN_WIDTH)]
+    width: usize,
 
-    /// Height of the output image
-    #[arg(long)]
-    height: Option<usize>,
+    /// Height of the output image, must be a multiple of 512
+    #[arg(long, default_value_t = DEFAULT_SCREEN_HEIGHT)]
+    height: usize,
 
-    /// Decreases resolution by <LOW> times
-    #[arg(long, short, default_value_t = 1)]
-    low: usize,
-
-    /// Increases resolution <SCALE> times
-    #[arg(long, short, default_value_t = 1)]
+    /// Increases resolution by <SCALE> times, should be a power of 2
+    #[arg(long, short, default_value_t = 4)]
     scale: usize,
 
-    /// Determines computing method, valid values are 'gpu' (for computation on GPU), 
+    /// Determines computation method, valid values are 
+    /// 'gpu' (for computation on GPU), 
     /// 'multicpu' (for multithreaded CPU computation), 
     /// 'singlecpu' (for computation on single thread on CPU)
     #[arg(long, short, default_value_t = ComputationType::Gpu)]
     r#type: ComputationType,
+
+    /// The name of configuraion TOML file
+    #[arg(long, default_value_t = RENDER_CFG_FILE.into())]
+    cfg: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -210,5 +232,36 @@ mod tests {
         let bytes = scene.as_bytes();
 
         eprintln!("{:?}", &bytes);
+    }
+
+    #[tokio::test]
+    async fn default_render_config() {
+        let cfg = RenderConfiguration::default();
+        let cfg_string = toml::ser::to_string(&cfg).unwrap();
+
+        tokio::fs::write("render_config.toml", &cfg_string).await.unwrap();
+    }
+
+    #[test]
+    fn test_serialize_scene() {
+        type Node = SerializeableSceneNode;
+
+        let scene = Node::Union(vec![
+            Node::Object(ObjectData::Ball { radius: 1.0 }),
+            Node::Object(ObjectData::Ball { radius: 2.0 }),
+            Node::Object(ObjectData::Ball { radius: 3.0 }),
+            Node::Object(ObjectData::Ball { radius: 4.0 }),
+            Node::Object(ObjectData::Ball { radius: 5.0 }),
+            Node::Object(ObjectData::Ball { radius: 6.0 }),
+            Node::Intersection(vec![
+                Node::Object(ObjectData::Ball { radius: 7.0 }),
+                Node::Object(ObjectData::Ball { radius: 8.0 }),
+                Node::Object(ObjectData::Ball { radius: 9.0 }),
+            ]),
+        ]);
+
+        let scene_string = serde_json::ser::to_string_pretty(&scene).unwrap();
+
+        println!("{scene_string}");
     }
 }

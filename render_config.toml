@@ -1,0 +1,49 @@
+# Direction towards light source
+to_light = [0.8804509043693542, 0.4402254521846771, -0.17609018087387085]
+# Maximum number of light bounces in the scene, should be less than 11
+n_bounces = 5
+# Rotating angle of super sample rays spread
+super_sample_angle = 0.5235987901687622
+# Used for debugging, don't touch
+_padding = 0
+
+[camera]
+# Distance from target position
+distance = 2.0
+# Vertical camera angle, in radians
+phi = 1.2 # 1.5707963705062866
+# Horizontal camera angle, in radians
+theta = 0.0
+# Vertial field of view, in radians
+vfov = 1.5707963705062866
+# Camera target pos, camera will look at this position
+target_pos = [0.0, 0.0, 0.0]
+
+[hit_cfg]
+# Small displacement used for estimating normals in finite difference method
+normal_eps = 0.001
+# Position lift after reflection
+normal_lift = 0.001
+# Amount of ambient light
+ambient = 0.3
+# Fresnel power constant of all materials
+fresnel_power = 1.8
+
+[hit_cfg.raymarch_settings]
+# Maximum number of raymarching steps
+max_n_steps = 1000
+# Maximum raymarching distance
+max_distance = 20.0
+# All such distances that are smaller than this value
+# by absolute value are considered to be zero
+epsilon = 0.0001
+
+[hit_cfg.ao_config]
+# Length of ambient occlusion approximation vector
+len = 0.2
+# Number of steps to estimate an occlusion
+n_steps = 20
+# Minimum value of ambient occlusion approximation
+min_value = 0.3
+# AO power constant used for better result
+power = 0.3

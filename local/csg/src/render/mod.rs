@@ -4,6 +4,7 @@
 
 pub mod distance;
 
+use serde::{Serialize, Deserialize};
 use glam::*;
 use distance::*;
 
@@ -35,6 +36,7 @@ pub struct HitInfo {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Serialize, Deserialize)]
 pub struct HitConfig {
     pub raymarch_settings: RayMarchSettings,
     pub ao_config: AoConfig,
@@ -63,6 +65,7 @@ impl Default for HitConfig {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Serialize, Deserialize)]
 pub struct AoConfig {
     pub len: f32,
     pub n_steps: u32,
@@ -199,6 +202,7 @@ pub fn compute_ambient_occlusion(
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Serialize, Deserialize)]
 pub struct Camera {
     pub distance: f32,
     pub phi: f32,
@@ -220,7 +224,10 @@ impl Default for Camera {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable,
+    Serialize, Deserialize,
+)]
 pub struct RenderConfiguration {
     pub to_light: Vec3,
     pub n_bounces: u32,

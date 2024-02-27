@@ -371,8 +371,8 @@ struct HitInfo {
     color: vec3f,
 }
 
-var<private> hit_color_stack: array<vec3f, 6>;
-var<private> reflectance_stack: array<f32, 6>;
+var<private> hit_color_stack: array<vec3f, 11>;
+var<private> reflectance_stack: array<f32, 11>;
 
 fn hit(origin: vec3f, direction: vec3f) -> HitInfo {
     var hit_pos = origin;
@@ -524,8 +524,7 @@ fn compute_image(
         + local_invocation_index;
 
     let screen_index = global_invocation_index
-        + call_data.y_offset * call_data.screen_width
-        + call_data.index * call_data.screen_width / 3;
+        + call_data.y_offset * call_data.screen_width;
 
     let x_screen = screen_index % call_data.screen_width;
     let y_screen = screen_index / call_data.screen_width;

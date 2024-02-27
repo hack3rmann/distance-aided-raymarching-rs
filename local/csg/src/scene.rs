@@ -1,5 +1,6 @@
 use glam::*;
-use crate::geometry::Geometry;
+use serde::{Deserialize, Serialize};
+use crate::geometry::*;
 
 
 
@@ -28,7 +29,7 @@ pub enum SceneNode {
 
 
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ObjectData {
     Ball { radius: f32 },
     Semispace { normal: Vec3, distance: f32 },
@@ -180,4 +181,18 @@ impl<G: Geometry> From<&G> for Scene {
         value.insert_to_scene(&mut result);
         result
     }
+}
+
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SerializeableSceneNode {
+    Union(Vec<Self>),
+    SmoothUnion { param: f32, nodes: Vec<Self> },
+    Intersection(Vec<Self>),
+    SmoothIntersection { param: f32, nodes: Vec<Self> },
+    Difference { left: Box<Self>, right: Box<Self> },
+    SmoothDifference { left: Box<Self>, right: Box<Self>, param: f32 },
+    Compliment(Box<Self>),
+    Object(ObjectData),
 }

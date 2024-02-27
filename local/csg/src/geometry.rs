@@ -9,34 +9,58 @@ use glam::*;
 
 
 
-pub trait Geometry: Sized + Send + Sync {
+pub trait Geometry: Send + Sync {
     fn sdf(&self) -> impl Sdf;
 
-    fn union<G: Geometry>(self, other: G) -> Union<Self, G> {
+    fn union<G: Geometry>(self, other: G) -> Union<Self, G>
+    where
+        Self: Sized,
+    {
         Union { first: self, second: other }
     }
 
-    fn intersect<G: Geometry>(self, other: G) -> Intersection<Self, G> {
+    fn intersect<G: Geometry>(self, other: G) -> Intersection<Self, G>
+    where
+        Self: Sized,
+    {
         Intersection { first: self, second: other }
     }
 
-    fn smooth_union<G: Geometry>(self, other: G, param: f32) -> SmoothUnion<Self, G> {
+    fn smooth_union<G: Geometry>(self, other: G, param: f32)
+        -> SmoothUnion<Self, G>
+    where
+        Self: Sized,
+    {
         SmoothUnion { first: self, second: other, param }
     }
 
-    fn smooth_intersection<G: Geometry>(self, other: G, param: f32) -> SmoothIntersection<Self, G> {
+    fn smooth_intersection<G: Geometry>(self, other: G, param: f32)
+        -> SmoothIntersection<Self, G>
+    where
+        Self: Sized,
+    {
         SmoothIntersection { first: self, second: other, param }
     }
 
-    fn compliment(self) -> Compliment<Self> {
+    fn compliment(self) -> Compliment<Self>
+    where
+        Self: Sized,
+    {
         Compliment { geometry: self }
     }
 
-    fn subtract<G: Geometry>(self, other: G) -> Difference<Self, G> {
+    fn subtract<G: Geometry>(self, other: G) -> Difference<Self, G>
+    where
+        Self: Sized,
+    {
         Difference { left: self, right: other }
     }
 
-    fn smooth_subtract<G: Geometry>(self, other: G, param: f32) -> SmoothDifference<Self, G> {
+    fn smooth_subtract<G: Geometry>(self, other: G, param: f32)
+        -> SmoothDifference<Self, G>
+    where
+        Self: Sized,
+    {
         SmoothDifference { left: self, right: other, param }
     }
 
