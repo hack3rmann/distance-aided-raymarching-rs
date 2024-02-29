@@ -84,51 +84,6 @@ impl Default for AoConfig {
     }
 }
 
-pub fn hit_recursive(
-    ro: Vec3, rd: Vec3, to_light: Vec3,
-    depth: usize, sdf: impl Sdf, cfg: &HitConfig,
-) -> HitInfo {
-    let raymarch_hit = raymarch(ro, rd, sdf, cfg.raymarch_settings);
-
-    let Some(RaymarchHitInfo { pos, .. }) = raymarch_hit else {
-        return HitInfo { color: sky_color(rd, to_light), pos: None };
-    };
-
-    let normal = compute_normal(pos, sdf, cfg.normal_eps);
-
-    let albedo = sdf(pos).color;
-    let mut brightness = f32::max(cfg.ambient, Vec3::dot(normal, to_light));
-
-    if raymarch(
-        pos + cfg.normal_lift * normal, to_light, sdf, cfg.raymarch_settings
-    ).is_some() {
-        brightness = cfg.ambient;
-    }
-
-    if depth == 0 {
-        return HitInfo {
-            pos: Some(pos),
-            color: brightness * albedo,
-        };
-    }
-
-    let fresnel_factor = 1.0 - (1.0 - normal.dot(rd).abs()).powf(cfg.fresnel_power);
-
-    let next_hit = hit(
-        pos + cfg.normal_lift * normal, reflect(rd, normal), to_light, depth - 1, sdf, cfg
-    );
-    
-    let ao = compute_ambient_occlusion(
-        pos, normal, cfg.ao_config.len / cfg.ao_config.n_steps as f32,
-        cfg.ao_config.n_steps as usize, cfg.ao_config.min_value, cfg.ao_config.power, sdf
-    );
-
-    HitInfo {
-        pos: next_hit.pos,
-        color: ao * mix(next_hit.color, albedo * brightness, fresnel_factor),
-    }
-}
-
 pub fn hit(
     mut ro: Vec3, mut rd: Vec3, to_light: Vec3,
     n_steps: usize, sdf: impl Sdf, cfg: &HitConfig,
@@ -159,7 +114,9 @@ pub fn hit(
             f32::max(cfg.ambient, normal.dot(to_light))
         } else { cfg.ambient };
 
-        let fresnel_factor = (1.0 - normal.dot(rd).abs()).powf(cfg.fresnel_power);
+        let fresnel_factor = (1.0 - normal.dot(rd).abs())
+            .clamp(0.0, 1.0)
+            .powf(cfg.fresnel_power);
         
         let ao = compute_ambient_occlusion(
             pos, normal, cfg.ao_config.len / cfg.ao_config.n_steps as f32,
@@ -224,17 +181,15 @@ impl Default for Camera {
 }
 
 #[repr(C)]
-#[derive(
-    Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable,
-    Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Serialize, Deserialize)]
 pub struct RenderConfiguration {
     pub to_light: Vec3,
     pub n_bounces: u32,
     pub camera: Camera,
     pub hit_cfg: HitConfig,
     pub super_sample_angle: f32,
-    pub _padding: u32
+    pub division_eps: f32,
 }
 
 impl Default for RenderConfiguration {
@@ -245,7 +200,7 @@ impl Default for RenderConfiguration {
             camera: Camera::default(),
             hit_cfg: HitConfig::default(),
             super_sample_angle: std::f32::consts::FRAC_PI_6,
-            _padding: 0,
+            division_eps: 0.001,
         }
     }
 }

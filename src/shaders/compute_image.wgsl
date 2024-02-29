@@ -2,7 +2,6 @@ struct CallData {
     screen_width: u32,
     screen_height: u32,
     y_offset: u32,
-    index: u32,
 }
 
 struct RenderConfiguration {
@@ -25,7 +24,7 @@ struct RenderConfiguration {
     ambient: f32,
     fresnel_power: f32,
     super_sample_angle: f32,
-    _padding: u32,
+    division_eps: f32,
 }
 
 @group(0)
@@ -411,7 +410,10 @@ fn hit(origin: vec3f, direction: vec3f) -> HitInfo {
             brightness = cfg.ambient;
         }
 
-        let fresnel_factor = pow(1.0 - abs(dot(normal, rd)), cfg.fresnel_power);
+        let fresnel_factor = pow(
+            clamp(1.0 - abs(dot(normal, rd)), 0.0, 1.0),
+            cfg.fresnel_power,
+        );
 
         let ao = compute_ambient_occlusion(pos, normal);
 

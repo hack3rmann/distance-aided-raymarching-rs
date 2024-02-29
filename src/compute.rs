@@ -9,6 +9,35 @@ pub enum ComputeContextMode {
     ReleaseSilent,
 }
 
+impl std::fmt::Display for ComputeContextMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Debug => "debug",
+            Self::ReleaseValidation => "validation",
+            Self::ReleaseSilent => "silent",
+        })
+    }
+}
+
+impl std::str::FromStr for ComputeContextMode {
+    type Err = ParseComputeContextModeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "debug" => Self::Debug,
+            "validation" => Self::ReleaseValidation,
+            "silent" => Self::ReleaseSilent,
+            _ => return Err(ParseComputeContextModeError::InvalidArg(s.to_owned()))
+        })
+    }
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ParseComputeContextModeError {
+    #[error("invalid compute context mode '{0}', valid values are: 'debug', 'validation', 'silent'")]
+    InvalidArg(String),
+}
+
 impl From<ComputeContextMode> for wgpu::InstanceFlags {
     fn from(value: ComputeContextMode) -> Self {
         use ComputeContextMode::*;
@@ -49,16 +78,16 @@ impl ComputeContext {
 
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::TIMESTAMP_QUERY,
                 label: None,
-                required_limits: default(),
+                required_limits: adapter.limits(),
             },
             None,
         ).await?;
 
         device.set_device_lost_callback(|reason, msg| {
             if msg != "Device dropped." {
-                eprintln!("the device is lost: '{msg}', because: {reason:?}");
+                log::error!("the device is lost: '{msg}', because: {reason:?}");
             }
         });
 

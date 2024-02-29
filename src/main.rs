@@ -1,28 +1,18 @@
-#![allow(unused)]
-
-
-
 pub mod compute;
 pub mod render;
 pub mod util;
+pub mod benchmark;
 
 use compute::{ComputeContext, ComputeContextMode};
 use render::*;
 
-use std::{error::Error, io::Read, sync::Arc, path::Path};
-use itertools::Itertools;
-use wgpu::{include_wgsl, BindGroupDescriptor};
+use std::{error::Error, path::Path};
 use clap::Parser;
-use csg::{geometry::{self, *}, render::Camera, scene::Scene};
+use csg::{geometry::*, scene::Scene, render::{get_color, RenderConfiguration}};
 use glam::*;
-use csg::render::{get_color, RenderConfiguration};
 use thiserror::Error;
-
-
-
-fn default<T: Default>() -> T {
-    T::default()
-}
+use util::*;
+use benchmark::Benchmark;
 
 
 
@@ -48,7 +38,68 @@ async fn main() -> Result<(), Box<dyn Error>> {
     assert!(screen_width % 512 == 0, "image width should be a multiple of 512");
     assert!(screen_height % 512 == 0, "image height should be a multiple of 512");
 
-    let geometry = csg::union! {
+    let geometry = geometry();
+
+    let render_cfg = match fetch_render_cfg(&cli_args.cfg).await {
+        Ok(cfg) => cfg,
+        Err(FetchRenderCfgError::IoError(..)) => {
+            log::error!(
+                "{} not found, using default configuration",
+                &cli_args.cfg,
+            );
+            default()
+        },
+        Err(err) => panic!("failed to configurate rendering: {err}"),
+    };
+
+    let mut bench = Benchmark::new();
+
+    let image = match cli_args.r#type {
+        ComputationType::Gpu => {
+            let context = ComputeContext::new(cli_args.mode).await?;
+            let scene = Scene::from(&geometry);
+        
+            render_image_gpu(
+                screen_width, screen_height, &scene,
+                &render_cfg, &context, Some(&mut bench),
+            )
+        },
+        ComputationType::MultiCpu => {
+            render::render_image_cpu_multithreaded(
+                screen_width, screen_height, get_color,
+                geometry.sdf(), &render_cfg, Some(&mut bench),
+            )
+        },
+        ComputationType::SingleCpu => {
+            render::render_image_cpu_singlethreaded(
+                screen_width, screen_height, get_color,
+                geometry.sdf(), &render_cfg, Some(&mut bench),
+            )
+        },
+    };
+
+    if cli_args.bench {
+        println!("{bench:?}");
+    }
+
+    let file = std::fs::File::create(&result_name)?;
+
+    let buf_writer = std::io::BufWriter::new(file);
+
+    let mut encoder = png::Encoder::new(
+        buf_writer, screen_width as u32, screen_height as u32,
+    );
+
+    encoder.set_color(png::ColorType::Rgba);
+
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(bytemuck::cast_slice(&image))?;
+
+    Ok(())
+}
+
+pub fn geometry() -> impl Geometry {
+    csg::union! {
         Geometry::smooth_union(
             Geometry::smooth_union(
                 Geometry::subtract(
@@ -79,55 +130,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ball::new(vec3(0.23, 0.72, 1.0), Vec3::ZERO, 1.5),
             StraightPrism::new(0.8 * Vec3::ONE, Vec3::ZERO, 1.2 * Vec3::ONE),
         ),
-    };
-
-    let render_cfg = match fetch_render_cfg(&cli_args.cfg).await {
-        Ok(cfg) => cfg,
-        Err(FetchRenderCfgError::IoError(..)) => {
-            log::error!(
-                "{} not found, using default configuration",
-                &cli_args.cfg,
-            );
-            default()
-        },
-        Err(err) => panic!("failed to configurate rendering: {err}"),
-    };
-
-    let image = match cli_args.r#type {
-        ComputationType::Gpu => {
-            let context = ComputeContext::new(ComputeContextMode::Debug).await?;
-            let scene = Scene::from(&geometry);
-        
-            render_image_gpu(
-                screen_width, screen_height, &scene, &render_cfg, &context,
-            )
-        },
-        ComputationType::MultiCpu => {
-            render::render_image_cpu_multithreaded(
-                screen_width, screen_height, get_color, geometry.sdf(), &render_cfg,
-            )
-        },
-        ComputationType::SingleCpu => {
-            render::render_image_cpu_singlethreaded(
-                screen_width, screen_height, get_color, geometry.sdf(), &render_cfg,
-            )
-        },
-    };
-
-    let file = std::fs::File::create(&result_name)?;
-
-    let mut buf_writer = std::io::BufWriter::new(file);
-
-    let mut encoder = png::Encoder::new(
-        buf_writer, screen_width as u32, screen_height as u32,
-    );
-
-    encoder.set_color(png::ColorType::Rgba);
-
-    let mut writer = encoder.write_header()?;
-    writer.write_image_data(bytemuck::cast_slice(&image))?;
-
-    Ok(())
+    }
 }
 
 pub async fn fetch_render_cfg(path: impl AsRef<Path>)
@@ -177,6 +180,15 @@ struct CliArgs {
     /// The name of configuraion TOML file
     #[arg(long, default_value_t = RENDER_CFG_FILE.into())]
     cfg: String,
+
+    /// Enables or disables debug and validation backend. 
+    /// Valid values are: 'debug', 'validation', 'silent'
+    #[arg(long, short, default_value_t = ComputeContextMode::ReleaseSilent)]
+    mode: ComputeContextMode,
+
+    /// Enables benchmarking
+    #[arg(long, short)]
+    bench: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -240,28 +252,5 @@ mod tests {
         let cfg_string = toml::ser::to_string(&cfg).unwrap();
 
         tokio::fs::write("render_config.toml", &cfg_string).await.unwrap();
-    }
-
-    #[test]
-    fn test_serialize_scene() {
-        type Node = SerializeableSceneNode;
-
-        let scene = Node::Union(vec![
-            Node::Object(ObjectData::Ball { radius: 1.0 }),
-            Node::Object(ObjectData::Ball { radius: 2.0 }),
-            Node::Object(ObjectData::Ball { radius: 3.0 }),
-            Node::Object(ObjectData::Ball { radius: 4.0 }),
-            Node::Object(ObjectData::Ball { radius: 5.0 }),
-            Node::Object(ObjectData::Ball { radius: 6.0 }),
-            Node::Intersection(vec![
-                Node::Object(ObjectData::Ball { radius: 7.0 }),
-                Node::Object(ObjectData::Ball { radius: 8.0 }),
-                Node::Object(ObjectData::Ball { radius: 9.0 }),
-            ]),
-        ]);
-
-        let scene_string = serde_json::ser::to_string_pretty(&scene).unwrap();
-
-        println!("{scene_string}");
     }
 }

@@ -191,12 +191,12 @@ impl Geometry for Torus {
     fn sdf(&self) -> impl Sdf {
         move |pos| {
             let q = vec2(
-                (pos - self.offset).xz().length() - self.outer_radius,
+                (pos - self.offset).xz().length() - self.inner_radius,
                 pos.y - self.offset.y,
             );
 
             DistanceInfo {
-                distance: q.length() - self.inner_radius,
+                distance: q.length() - self.outer_radius,
                 color: self.color,
             }
         }
@@ -379,8 +379,9 @@ impl<G1: Geometry, G2: Geometry> Geometry for SmoothUnion<G1, G2> {
             let left = self.first.sdf()(pos);
             let right = self.second.sdf()(pos);
             let distance = smooth_min(left.distance, right.distance, self.param);
-            let color = (right.distance * left.color + left.distance * right.color)
-                / (left.distance + right.distance);
+            let color = distance_color_mix(
+                left.color, right.color, left.distance, right.distance,
+            );
             DistanceInfo { distance, color }
         }
     }
@@ -425,8 +426,9 @@ impl<G1: Geometry, G2: Geometry> Geometry for SmoothIntersection<G1, G2> {
             let left = self.first.sdf()(pos);
             let right = self.second.sdf()(pos);
             let distance = smooth_max(left.distance, right.distance, self.param);
-            let color = (right.distance * left.color + left.distance * right.color)
-                / (left.distance + right.distance);
+            let color = distance_color_mix(
+                left.color, right.color, left.distance, right.distance,
+            );
             DistanceInfo { distance, color }
         }
     }
@@ -544,8 +546,9 @@ impl<G1: Geometry, G2: Geometry> Geometry for SmoothDifference<G1, G2> {
             let left = self.left.sdf()(pos);
             let right = self.right.sdf()(pos);
             let distance = smooth_diff(left.distance, right.distance, self.param);
-            let color = (right.distance * left.color - left.distance * right.color)
-                / (-left.distance + right.distance);
+            let color = distance_color_mix(
+                left.color, right.color, -left.distance, right.distance,
+            );
             DistanceInfo { distance, color }
         }
     }
@@ -588,12 +591,32 @@ pub fn smooth_max(lhs: f32, rhs: f32, param: f32) -> f32 {
 }
 
 pub fn smooth_diff(lhs: f32, rhs: f32, param: f32) -> f32 {
-    let h = clamp(0.5 - 0.5 * (lhs + rhs) / param, 0.0, 1.0);
-    mix(lhs, -rhs, h) + param * h * (1.0 - h)
+    let h = clamp(0.5 - 0.5 * (rhs + lhs) / param, 0.0, 1.0);
+    mix(rhs, -lhs, h) + param * h * (1.0 - h)
 }
 
-fn clamp(value: f32, min: f32, max: f32) -> f32 {
+pub fn clamp(value: f32, min: f32, max: f32) -> f32 {
     value.max(min).min(max)
+}
+
+fn safe_div_vec3(num: Vec3, denom: f32, exception: Vec3, eps: f32) -> Vec3 {
+    if denom.abs() < eps {
+        exception
+    } else {
+        num / denom
+    }
+}
+
+fn distance_color_mix(
+    left_color: Vec3, right_color: Vec3,
+    left_distance: f32, right_distance: f32,
+) -> Vec3 {
+    safe_div_vec3(
+        right_distance * left_color + left_distance * right_color,
+        left_distance + right_distance,
+        left_color,
+        0.001,
+    )
 }
 
 
