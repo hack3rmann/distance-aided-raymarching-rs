@@ -18,3 +18,9 @@ impl Benchmark {
         }
     }
 }
+
+impl std::fmt::Display for Benchmark {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "time spent on rendering: {:?}, time spent on data copying: {:?}", self.render, self.copy)
+    }
+}

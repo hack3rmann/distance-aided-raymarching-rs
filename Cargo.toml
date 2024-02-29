@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytemuck = { version = "1.14.3", features = ["extern_crate_alloc", "derive"] }
-env_logger = "0.11.2"
-log = "0.4.20"
-png = "0.17.13"
-tokio = { version = "1.36.0", features = ["full"] }
 wgpu = "0.19.1"
+png = "0.17.13"
 csg = { version = "*", path = "local/csg" }
-rayon = "1.8.1"
-glam = "0.25.0"
+tokio = { version = "1.36.0", features = ["full"] }
 clap = { version = "4.5.1", features = ["derive"] }
+rayon = "1.8.1"
+bytemuck = { version = "1.14.3", features = ["extern_crate_alloc", "derive"] }
+log = "0.4.20"
+env_logger = "0.11.2"
+glam = "0.25.0"
 thiserror = "1.0.57"
 serde = { version = "1.0.197", features = ["derive"] }
 toml = "0.8.10"

@@ -408,12 +408,13 @@ pub fn render_image_gpu(
 
     if let Some(bench) = bench {
         bench.render = compute_bench.render;
-        bench.copy = full_compute_time - compute_bench.render
+        bench.copy = full_compute_time
             + compute_bench.copy
             + vec_copy_time
             + buffer_map_time
             + cfg_copy_time
-            + scene_copy_time;
+            + scene_copy_time
+            - compute_bench.render;
     }
 
     result

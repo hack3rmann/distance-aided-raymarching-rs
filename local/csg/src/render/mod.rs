@@ -136,7 +136,7 @@ pub fn hit(
             cur_factor,
         ))
         .unwrap();
-    
+
     HitInfo {
         pos: Some(hit_pos),
         color,

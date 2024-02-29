@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     if cli_args.bench {
-        println!("{bench:?}");
+        println!("{bench}");
     }
 
     let file = std::fs::File::create(&result_name)?;
